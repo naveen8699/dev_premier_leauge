@@ -1,0 +1,4 @@
+create or replace TABLE LB_BASE (
+	H3_CELL NUMBER(18,0),
+	ASOF_DAY TIMESTAMP_NTZ(9)
+);
