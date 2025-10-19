@@ -19,6 +19,6 @@ Build a unified data platform on Snowflake that can:
 • Provide live dashboards with geospatial views for planners to monitor and act quickly
 
 Architecture:
-<img width="698" height="432" alt="image" src="https://github.com/user-attachments/assets/58116e57-a3f8-4889-8283-61f88df9c970" />
+in the deck
 
 
