@@ -109,7 +109,7 @@ with tabs[1]:
 
 
 # ------------------------------
-# PAGE 4: Holiday vs Regular Traffic
+# PAGE 3: Holiday vs Regular Traffic
 # ------------------------------
 with tabs[2]:
     st.subheader("Holiday vs Regular Season Traffic")
@@ -205,127 +205,124 @@ with tabs[2]:
 # 5th Page: Traffic Growth Map
 
 
-import streamlit as st
-from snowflake.snowpark.context import get_active_session
-import pandas as pd
 
 # -----------------------------------------------------------
 # Page Config
 # -----------------------------------------------------------
-
-st.set_page_config(page_title="Traffic Growth Map", layout="wide")
-st.title("Traffic Growth Analysis — Map View")
-
-session = get_active_session()
-
-# -----------------------------------------------------------
-# 1️⃣ Yearly Aggregated Query (2021–2025)
-# -----------------------------------------------------------
-query = """
-WITH yearly_traffic AS (
-    SELECT 
+with tabs[3]:
+    st.set_page_config(page_title="Traffic Growth Map", layout="wide")
+    st.title("Traffic Growth Analysis — Map View")
+    
+    session = get_active_session()
+    
+    # -----------------------------------------------------------
+    # 1️⃣ Yearly Aggregated Query (2021–2025)
+    # -----------------------------------------------------------
+    query = """
+    WITH yearly_traffic AS (
+        SELECT 
+            EXTRACT(YEAR FROM TS) AS traffic_year,
+            SUM(VOLUME_VEH) AS total_volume
+        FROM CITYDW.SILVER.SV_TRAFFIC
+        WHERE EXTRACT(YEAR FROM TS) BETWEEN 2021 AND 2025
+        GROUP BY 1
+        ORDER BY 1
+    )
+    SELECT
+        traffic_year,
+        total_volume,
+        LAG(total_volume) OVER (ORDER BY traffic_year) AS prev_year_volume,
+        ROUND(
+            CASE 
+                WHEN LAG(total_volume) OVER (ORDER BY traffic_year) IS NULL THEN NULL
+                ELSE ((total_volume - LAG(total_volume) OVER (ORDER BY traffic_year)) / LAG(total_volume) OVER (ORDER BY traffic_year)) * 100
+            END, 2
+        ) AS pct_change
+    FROM yearly_traffic;
+    """
+    df_year = session.sql(query).to_pandas()
+    
+    if df_year.empty:
+        st.warning("No traffic data found for 2021–2025.")
+        st.stop()
+    
+    # -----------------------------------------------------------
+    # 2️⃣ Map Query (H3 grid aggregation)
+    # -----------------------------------------------------------
+    map_query = """
+    SELECT
         EXTRACT(YEAR FROM TS) AS traffic_year,
-        SUM(VOLUME_VEH) AS total_volume
+        H3_CELL,
+        SUM(VOLUME_VEH) AS total_volume,
+        AVG(ST_Y(GEOG)) AS lat,
+        AVG(ST_X(GEOG)) AS lon
     FROM CITYDW.SILVER.SV_TRAFFIC
     WHERE EXTRACT(YEAR FROM TS) BETWEEN 2021 AND 2025
-    GROUP BY 1
-    ORDER BY 1
-)
-SELECT
-    traffic_year,
-    total_volume,
-    LAG(total_volume) OVER (ORDER BY traffic_year) AS prev_year_volume,
-    ROUND(
-        CASE 
-            WHEN LAG(total_volume) OVER (ORDER BY traffic_year) IS NULL THEN NULL
-            ELSE ((total_volume - LAG(total_volume) OVER (ORDER BY traffic_year)) / LAG(total_volume) OVER (ORDER BY traffic_year)) * 100
-        END, 2
-    ) AS pct_change
-FROM yearly_traffic;
-"""
-df_year = session.sql(query).to_pandas()
-
-if df_year.empty:
-    st.warning("No traffic data found for 2021–2025.")
-    st.stop()
-
-# -----------------------------------------------------------
-# 2️⃣ Map Query (H3 grid aggregation)
-# -----------------------------------------------------------
-map_query = """
-SELECT
-    EXTRACT(YEAR FROM TS) AS traffic_year,
-    H3_CELL,
-    SUM(VOLUME_VEH) AS total_volume,
-    AVG(ST_Y(GEOG)) AS lat,
-    AVG(ST_X(GEOG)) AS lon
-FROM CITYDW.SILVER.SV_TRAFFIC
-WHERE EXTRACT(YEAR FROM TS) BETWEEN 2021 AND 2025
-GROUP BY 1, H3_CELL
-ORDER BY 1, H3_CELL
-"""
-df_map = session.sql(map_query).to_pandas()
-df_map.columns = [c.lower() for c in df_map.columns]
-
-# -----------------------------------------------------------
-# 3️⃣ Year Selector (Multi-select Dropdown)
-# -----------------------------------------------------------
-years = sorted(df_year["TRAFFIC_YEAR"].unique())
-selected_years = st.multiselect(
-    "Select Year(s) for Analysis:",
-    options=years,
-    default=years,
-)
-
-if not selected_years:
-    selected_years = years
-
-df_year_filtered = df_year[df_year["TRAFFIC_YEAR"].isin(selected_years)]
-df_map_filtered = df_map[df_map["traffic_year"].isin(selected_years)]
-
-# -----------------------------------------------------------
-# 4️⃣ KPIs — Simple Text Summary
-# -----------------------------------------------------------
-st.subheader("Summary Statistics")
-
-total_volume = int(df_year_filtered["TOTAL_VOLUME"].sum())
-avg_growth = df_year_filtered["PCT_CHANGE"].mean(skipna=True)
-max_growth = df_year_filtered["PCT_CHANGE"].max(skipna=True)
-min_growth = df_year_filtered["PCT_CHANGE"].min(skipna=True)
-
-c1, c2, c3, c4 = st.columns(4)
-
-c1.metric("Total Vehicle Volume", f"{total_volume:,}")
-c2.metric("Average Yearly Growth", f"{avg_growth:.2f}%")
-c3.metric("Maximum Yearly Growth", f"{max_growth:.2f}%")
-c4.metric("Minimum Yearly Growth", f"{min_growth:.2f}%")
-# -----------------------------------------------------------
-# 5️⃣ Map Section
-# -----------------------------------------------------------
-st.subheader("Traffic Volume Map")
-
-st.markdown("""
-**Map Description**  
-- Each point represents an H3 grid cell with aggregated vehicle volumes.  
-- Larger clusters indicate higher vehicle flow.  
-- Data shown for selected years.
-""")
-
-if {"lat", "lon"}.issubset(df_map_filtered.columns) and not df_map_filtered.empty:
-    df_map_plot = df_map_filtered.rename(columns={"lat": "latitude", "lon": "longitude"})
-    st.map(df_map_plot[["latitude", "longitude"]])
-else:
-    st.info("No coordinates available for map view.")
-
-# -----------------------------------------------------------
-# 6️⃣ Data Download
-# -----------------------------------------------------------
-st.subheader("Download Data")
-
-csv = df_year_filtered.to_csv(index=False).encode("utf-8")
-st.download_button(
-    "Download Yearly Growth Data (CSV)",
-    data=csv,
-    file_name="traffic_growth_summary.csv",
-    mime="text/csv",
-)
+    GROUP BY 1, H3_CELL
+    ORDER BY 1, H3_CELL
+    """
+    df_map = session.sql(map_query).to_pandas()
+    df_map.columns = [c.lower() for c in df_map.columns]
+    
+    # -----------------------------------------------------------
+    # 3️⃣ Year Selector (Multi-select Dropdown)
+    # -----------------------------------------------------------
+    years = sorted(df_year["TRAFFIC_YEAR"].unique())
+    selected_years = st.multiselect(
+        "Select Year(s) for Analysis:",
+        options=years,
+        default=years,
+    )
+    
+    if not selected_years:
+        selected_years = years
+    
+    df_year_filtered = df_year[df_year["TRAFFIC_YEAR"].isin(selected_years)]
+    df_map_filtered = df_map[df_map["traffic_year"].isin(selected_years)]
+    
+    # -----------------------------------------------------------
+    # 4️⃣ KPIs — Simple Text Summary
+    # -----------------------------------------------------------
+    st.subheader("Summary Statistics")
+    
+    total_volume = int(df_year_filtered["TOTAL_VOLUME"].sum())
+    avg_growth = df_year_filtered["PCT_CHANGE"].mean(skipna=True)
+    max_growth = df_year_filtered["PCT_CHANGE"].max(skipna=True)
+    min_growth = df_year_filtered["PCT_CHANGE"].min(skipna=True)
+    
+    c1, c2, c3, c4 = st.columns(4)
+    
+    c1.metric("Total Vehicle Volume", f"{total_volume:,}")
+    c2.metric("Average Yearly Growth", f"{avg_growth:.2f}%")
+    c3.metric("Maximum Yearly Growth", f"{max_growth:.2f}%")
+    c4.metric("Minimum Yearly Growth", f"{min_growth:.2f}%")
+    # -----------------------------------------------------------
+    # 5️⃣ Map Section
+    # -----------------------------------------------------------
+    st.subheader("Traffic Volume Map")
+    
+    st.markdown("""
+    **Map Description**  
+    - Each point represents an H3 grid cell with aggregated vehicle volumes.  
+    - Larger clusters indicate higher vehicle flow.  
+    - Data shown for selected years.
+    """)
+    
+    if {"lat", "lon"}.issubset(df_map_filtered.columns) and not df_map_filtered.empty:
+        df_map_plot = df_map_filtered.rename(columns={"lat": "latitude", "lon": "longitude"})
+        st.map(df_map_plot[["latitude", "longitude"]])
+    else:
+        st.info("No coordinates available for map view.")
+    
+    # -----------------------------------------------------------
+    # 6️⃣ Data Download
+    # -----------------------------------------------------------
+    st.subheader("Download Data")
+    
+    csv = df_year_filtered.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Yearly Growth Data (CSV)",
+        data=csv,
+        file_name="traffic_growth_summary.csv",
+        mime="text/csv",
+    )
